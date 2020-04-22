@@ -357,13 +357,14 @@ class losspower(Std7382006):
     def _current(self, power):
         return (power * 1e6 * self.powerfactor) / (self.voltage * mt.sqrt(3))
 
-    def completedf(self):
+    def initdf(self):
         df = self.df
 
         df['I(A)'] = np.zeros(df.shape[0])
         df['Cable Temp'] = np.zeros(df.shape[0])
         df['Joule Loss'] = np.zeros(df.shape[0])
         df['Out Net Prod'] = np.zeros(df.shape[0])
+        df['% JL'] = np.zeros(df.shape[0])
 
         tamb = df['Temperature']
         newr = [self.new_resistance(i) for i in tamb]
@@ -379,8 +380,90 @@ class losspower(Std7382006):
                             for i, j in zip(newr, df['I(A)'])]
 
         df['Out Net Prod'] = df['Net Prod'] + df['Joule Loss']
+        df['% JL'] = np.nan_to_num(df['Joule Loss']/df['Out Net Prod'])
 
         return df
+
+    def initdf_tqdm(self):
+        df = self.df
+
+        df['I(A)'] = np.zeros(df.shape[0])
+        df['Cable Temp'] = np.zeros(df.shape[0])
+        df['Joule Loss'] = np.zeros(df.shape[0])
+        df['Out Net Prod'] = np.zeros(df.shape[0])
+        df['% JL'] = np.zeros(df.shape[0])
+
+        newr = []
+        pointslist = self._pointscable()
+
+        for i in tqdm(range(df.shape[0])):
+            newr.append(self.new_resistance(
+                df.loc[df.index[i], ['Temperature']].values[0]))
+
+            df.loc[df.index[i], ['I(A)']] = self._current(
+                df.loc[df.index[i], ['Net Prod']])
+
+            df.loc[df.index[i], ['Cable Temp']] = self.temp(
+                df.loc[df.index[i], ['I(A)']], pointslist)
+
+            df.loc[df.index[i], ['Joule Loss']] = self.power_loss(
+                newr[i], df.loc[df.index[i], ['I(A)']])
+
+            df.loc[df.index[i], ['Out Net Prod']] = df.loc[df.index[i],
+                                                           ['Net Prod']] + df.loc[df.index[i], ['Joule Loss']]
+
+            df.loc[df.index[i], ['% JL']] = df.loc[df.index[i], [
+                'Joule Loss']] / df.loc[df.index[i], ['Out Net Prod']]
+
+        return df
+
+    def initdf_vectorize(self):
+        df = self.df
+        
+
+        def func_newdf(netprod, tamb):
+            pointslist = self._pointscable()
+            # df['I(A)'] = np.zeros(df.shape[0])
+            # df['Cable Temp'] = np.zeros(df.shape[0])
+            # df['Joule Loss'] = np.zeros(df.shape[0])
+            # df['Out Net Prod'] = np.zeros(df.shape[0])
+            # df['% JL'] = np.zeros(df.shape[0])
+
+
+            new_cur= self._current(netprod)
+            new_r = self.new_resistance(df['Temperature'])
+            
+            new_cabletemp = [self.temp(df['I(A)'], pointslist)]
+            new_jouleloss = [self.power_loss(newr, df['I(A)'])]
+            net_outnet = df['Net Prod'] + df['Joule Loss']
+            new_perjl = np.nan_to_num(df['Joule Loss']/df['Out Net Prod'])
+
+            newr = []
+            pointslist = self._pointscable()
+            for i in tqdm(range(df.shape[0])):
+                newr.append(self.new_resistance(
+                    df.loc[df.index[i], ['Temperature']].values[0]))
+
+                df.loc[df.index[i], ['I(A)']] = self._current(
+                    df.loc[df.index[i], ['Net Prod']])
+
+                df.loc[df.index[i], ['Cable Temp']] = self.temp(
+                    df.loc[df.index[i], ['I(A)']], pointslist)
+
+                df.loc[df.index[i], ['Joule Loss']] = self.power_loss(
+                    newr[i], df.loc[df.index[i], ['I(A)']])
+
+                df.loc[df.index[i], ['Out Net Prod']] = df.loc[df.index[i],
+                                                               ['Net Prod']] + df.loc[df.index[i], ['Joule Loss']]
+
+                df.loc[df.index[i], ['% JL']] = df.loc[df.index[i], [
+                    'Joule Loss']] / df.loc[df.index[i], ['Out Net Prod']]
+
+        [func_newdf(x) for index, x in tqdm(np.ndenumerate(df))]
+        return df
+
+    def optmizing(self):
+        df = self.initdf()
 
     # def cablechoice(self, cable_type, cable_name, voltage, extline):
     #         # TODO

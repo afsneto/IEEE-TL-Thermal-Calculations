@@ -129,4 +129,8 @@ dataelectric = tstd.losspower(dfproduction=dfproduction,
                               climavars=climavars,
                               cablevars=cablevars)
 
-print(dataelectric.completedf().head(24))
+
+
+print(dataelectric.initdf_vectorize())
+# print(dataelectric.initdf().head(24))
+# print(dataelectric.initdf_tqdm().head(24))
