@@ -7,8 +7,10 @@ Created on Thu Feb  8 10:58:03 2018
 
 import math as mt
 import numpy as np
+import pandas as pd
 import cmath as cm
 import matplotlib.pyplot as plt
+from scipy.optimize import minimize
 
 from cable import loadcable
 from tqdm import tqdm
@@ -304,7 +306,7 @@ class Std7382006:
         else:
             r1, t1, r2, t2 = self._resistances_cable()
             rf = r1 + ((r2 - r1) / (t2 - t1)) * (tf - t1)
-        return rf
+        return rf  # ohm / m
 
     def power_loss(self, rf, current=0):
         # final_temp = self.calculate_temp(current)
@@ -313,7 +315,10 @@ class Std7382006:
             rf = rf
         else:
             rf = self.new_resistance()
-        power_loss = current ** 2 * rf * 1000 / 1000
+        # rf em metros * 1e3 = rf em km
+        # power_loss em W / km , divido por 1e6 = MW / km
+        power_loss = 3 * (current ** 2 * (rf * 1e3) / (1e6))
+
         return power_loss
 
     def _cable_description(self):
@@ -348,41 +353,80 @@ class Std7382006:
 
 class losspower(Std7382006):
 
-    def __init__(self, dfproduction, voltage, powerfactor, climavars, cablevars):
+    def __init__(self, dfproduction, voltage, powerfactor, climavars, cablevars, outnetlimit, extline):
         self.df = dfproduction
         self.voltage = voltage
         self.powerfactor = powerfactor
+        self.outnetlimit = outnetlimit
+        self.extline = extline
         super().__init__(climavars, cablevars)
 
     def _current(self, power):
         return (power * 1e6 * self.powerfactor) / (self.voltage * mt.sqrt(3))
 
+    def _completedf(self, df):
+        # df['I(A)'] = np.zeros(df.shape[0])
+        # df['Cable Temp'] = np.zeros(df.shape[0])
+        # df['Joule Loss'] = np.zeros(df.shape[0])
+        # df['Out Net Prod'] = np.zeros(df.shape[0])
+        # df['% JL'] = np.zeros(df.shape[0])
+
+        newr = [self.new_resistance(i) for i in df.loc[:, 'Temperature']]
+
+        df['I(A)'] = [self._current(i) for i in df.loc[:, 'Net Prod']]
+        pointslist = self._pointscable()
+        df['Cable Temp'] = [self.temp(i, pointslist)
+                            for i in df.loc[:, 'I(A)']]
+        df['Joule Loss'] = [self.power_loss(i, j) * self.extline
+                            for i, j in zip(newr, df.loc[:, 'I(A)'])]
+        df['Out Net Prod'] = df['Net Prod'] - df['Joule Loss']
+        df['% JL'] = np.nan_to_num(df['Joule Loss']/df['Out Net Prod']) * 100
+        return df
+
     def initdf(self):
         df = self.df
+        newdf = self._completedf(df)
+        return newdf
 
-        df['I(A)'] = np.zeros(df.shape[0])
-        df['Cable Temp'] = np.zeros(df.shape[0])
-        df['Joule Loss'] = np.zeros(df.shape[0])
-        df['Out Net Prod'] = np.zeros(df.shape[0])
-        df['% JL'] = np.zeros(df.shape[0])
+    def opt_netprod(self, netprod):
 
-        tamb = df['Temperature']
-        newr = [self.new_resistance(i) for i in tamb]
+        obj = self._calculationvars(netprod)
 
-        # tqdm.pandas()
-        # df['I(A)'] = df['Net Prod'].swifter.apply(self._current)
-        df['I(A)'] = [self._current(i) for i in df['Net Prod']]
+        if obj <= 0:
+            pass
 
-        pointslist = self._pointscable()
-        df['Cable Temp'] = [self.temp(i, pointslist) for i in df['I(A)']]
+        else:
 
-        df['Joule Loss'] = [self.power_loss(i, j)
-                            for i, j in zip(newr, df['I(A)'])]
+            while obj > 0:
 
-        df['Out Net Prod'] = df['Net Prod'] + df['Joule Loss']
-        df['% JL'] = np.nan_to_num(df['Joule Loss']/df['Out Net Prod'])
+                obj = self._calculationvars(netprod)
 
-        return df
+                netprod -= 0.05
+
+        return netprod
+
+    def finaldf(self):
+        df = self.initdf().head(100)
+        vfunc = np.vectorize(self.opt_netprod)
+        df['Net Prod'] = vfunc(df['Net Prod'])
+        self._completedf(df).to_excel('dfteste.xlsx')
+
+    def _calculationvars(self, netprod):
+        if netprod > self.outnetlimit:
+
+            pointslist = self._pointscable()
+            new_cur = self._current(netprod)
+            new_cabletemp = self.temp(new_cur, pointslist)
+            new_r = self.new_resistance(new_cabletemp) * 1000  # loss / km
+            new_jouleloss = self.power_loss(new_r, new_cur) * self.extline
+            new_outnet = netprod - new_jouleloss
+
+            obj = (self.outnetlimit - new_outnet) ** 2
+
+        else:
+            obj = 0
+
+        return obj
 
     def initdf_tqdm(self):
         df = self.df
@@ -416,54 +460,6 @@ class losspower(Std7382006):
                 'Joule Loss']] / df.loc[df.index[i], ['Out Net Prod']]
 
         return df
-
-    def initdf_vectorize(self):
-        df = self.df
-        
-
-        def func_newdf(netprod, tamb):
-            pointslist = self._pointscable()
-            # df['I(A)'] = np.zeros(df.shape[0])
-            # df['Cable Temp'] = np.zeros(df.shape[0])
-            # df['Joule Loss'] = np.zeros(df.shape[0])
-            # df['Out Net Prod'] = np.zeros(df.shape[0])
-            # df['% JL'] = np.zeros(df.shape[0])
-
-
-            new_cur= self._current(netprod)
-            new_r = self.new_resistance(df['Temperature'])
-            
-            new_cabletemp = [self.temp(df['I(A)'], pointslist)]
-            new_jouleloss = [self.power_loss(newr, df['I(A)'])]
-            net_outnet = df['Net Prod'] + df['Joule Loss']
-            new_perjl = np.nan_to_num(df['Joule Loss']/df['Out Net Prod'])
-
-            newr = []
-            pointslist = self._pointscable()
-            for i in tqdm(range(df.shape[0])):
-                newr.append(self.new_resistance(
-                    df.loc[df.index[i], ['Temperature']].values[0]))
-
-                df.loc[df.index[i], ['I(A)']] = self._current(
-                    df.loc[df.index[i], ['Net Prod']])
-
-                df.loc[df.index[i], ['Cable Temp']] = self.temp(
-                    df.loc[df.index[i], ['I(A)']], pointslist)
-
-                df.loc[df.index[i], ['Joule Loss']] = self.power_loss(
-                    newr[i], df.loc[df.index[i], ['I(A)']])
-
-                df.loc[df.index[i], ['Out Net Prod']] = df.loc[df.index[i],
-                                                               ['Net Prod']] + df.loc[df.index[i], ['Joule Loss']]
-
-                df.loc[df.index[i], ['% JL']] = df.loc[df.index[i], [
-                    'Joule Loss']] / df.loc[df.index[i], ['Out Net Prod']]
-
-        [func_newdf(x) for index, x in tqdm(np.ndenumerate(df))]
-        return df
-
-    def optmizing(self):
-        df = self.initdf()
 
     # def cablechoice(self, cable_type, cable_name, voltage, extline):
     #         # TODO
