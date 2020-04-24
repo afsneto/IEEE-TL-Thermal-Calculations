@@ -133,8 +133,16 @@ class Std7382006:
 
         delt_t = tc - self.tamb
 
-        qcn = 0.02050 * pf ** 0.5 * \
-            self.paramcable['Diam_Total'].values[0] ** 0.75 * delt_t ** 1.25
+        def powernumpy(x, y):
+            return np.sign(x) * (np.abs(x)) ** y
+
+        diamcable = self.paramcable['Diam_Total'].values[0]
+        # Deal with RuntimeWarning: invalid value encountered in power
+        # qcn = 0.02050 * pf ** 0.5 * \
+        #     self.paramcable['Diam_Total'].values[0] ** 0.75 * delt_t ** 1.25
+        qcn = 0.02050 * \
+            powernumpy(pf, 0.5) * powernumpy(diamcable, 0.75) * \
+            powernumpy(delt_t, 1.25)
 
         '''
         Forced convection heat loss (qc1 e qc2)
@@ -156,11 +164,11 @@ class Std7382006:
         k_angle = 1.194 - mt.cos(phirad + 0.194 *
                                  mt.cos(2 * phirad) + 0.368 * mt.sin(2 * phirad))
 
-        qc1 = 1.01 + 0.0372 * ((self.paramcable['Diam_Total'].values[0] * pf *
-                                self.vw) / mf) ** 0.52 * kf * k_angle * delt_t
+        qc1 = 1.01 + 0.0372 * ((diamcable * pf * self.vw) /
+                               mf) ** 0.52 * kf * k_angle * delt_t
 
-        qc2 = 0.0119 * ((self.paramcable['Diam_Total'].values[0]
-                         * pf * self.vw) / mf) ** 0.6 * kf * k_angle * delt_t
+        qc2 = 0.0119 * ((diamcable * pf * self.vw) /
+                        mf) ** 0.6 * kf * k_angle * delt_t
 
         if self.vw == 0:
             qc = qcn
@@ -391,25 +399,25 @@ class losspower(Std7382006):
     def opt_netprod(self, netprod):
 
         obj = self._calculationvars(netprod)
-
         if obj <= 0:
             pass
-
         else:
-
             while obj > 0:
-
                 obj = self._calculationvars(netprod)
-
                 netprod -= 0.05
 
         return netprod
 
     def finaldf(self):
-        df = self.initdf().head(100)
-        vfunc = np.vectorize(self.opt_netprod)
-        df['Net Prod'] = vfunc(df['Net Prod'])
-        self._completedf(df).to_excel('dfteste.xlsx')
+
+        df = self.initdf()
+        df['Net Prod'] = np.clip(df['Net Prod'], 0, 62)
+        # df = self.initdf()
+        # vfunc = np.vectorize(self.opt_netprod)
+        # df['Net Prod'] = vfunc(df['Net Prod'])
+        # df['Net Prod'] = [self.opt_netprod(x)
+        #                   for index, x in tqdm(np.ndenumerate(df['Net Prod']))]
+        return self._completedf(df).to_excel('dfteste.xlsx')
 
     def _calculationvars(self, netprod):
         if netprod > self.outnetlimit:
