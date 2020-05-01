@@ -13,29 +13,31 @@ import seaborn as sns
 
 import swifter
 import calendar
+import pytz
 
 
 class helioclim3:
-    def __init__(self, hc3csvfile, pklfile):
+    def __init__(self, hc3csvfile, pkl_filename):
         self.csvfile = hc3csvfile  # csv file
 
         cwd = Path.cwd()
-        pklfilepath = cwd / pklfile
+        pkl_file = cwd / pkl_filename
 
-        def savepandasfile(df, output=pklfile):
+        def savepandasfile(df, output=pkl_filename):
             df = self.loading()
             df.to_pickle(output)
 
-        def loadpandasfile(file=pklfile):
+        def loadpandasfile(file=pkl_filename):
             try:
                 return pd.read_pickle(file)
             except:
-                print('Error in loading file.')
+                print('LOADING FILE ERROR\n')
 
-        if pklfilepath.exists():
+        if pkl_file.exists():
+            print('LOADING .PKL FILE\n')
             self.df = loadpandasfile()
         else:
-            savepandasfile(self.csvfile, pklfile)
+            savepandasfile(self.csvfile, pkl_filename)
             self.df = loadpandasfile()
 
     def dfloaded(self):
@@ -61,11 +63,16 @@ class helioclim3:
         df["Temperature"] = [(i - 273.15)
                              for i in df["Temperature"]]
         # Fix date
-        tqdm.pandas()
+        # tqdm.pandas()
         df.loc[:, "Date"] = df.Date.swifter.apply(self._fixhours)
 
         # Assign "Date" column to index
         df.set_index("Date", inplace=True)
+        # Convert Date to correct timezone
+        # https://en.wikipedia.org/wiki/List_of_tz_database_time_zones#List
+        # https://stackoverflow.com/questions/22800079/converting-time-zone-pandas-dataframe
+        buenos_aires = pytz.timezone('America/Buenos_Aires')
+        df.index = df.index.tz_localize(pytz.utc).tz_convert(buenos_aires)
 
         # Fix values -999
         if datafix:

@@ -55,10 +55,14 @@ class energycalc:
         self.df = self._datatreat(df)
 
     def _datatreat(self, df):
-        df.drop(columns=['Top of Atmosphere', 'Code', 'Relative Humidity',
+        # df.drop(columns=['Top of Atmosphere', 'Code', 'Relative Humidity',
+        #                  'Wind direction', 'Rainfall', 'Snowfall',
+        #                  'Snow depth'],
+        #         inplace=True)
+        df.drop(columns=['Top of Atmosphere',
+                         'Code', 'Relative Humidity',
                          'Wind direction', 'Rainfall', 'Snowfall',
-                         'Snow depth'],
-                inplace=True)
+                         'Snow depth'])
 
         return df
 
@@ -104,7 +108,7 @@ class energycalc:
         module_losses = np.cumprod(frac2, dtype=float)[-1]
 
         perf_ratio = local_losses * module_losses
-        print('Desempenho global: {0:.2f} %'.format(perf_ratio * 100))
+        # print('Desempenho global: {0:.2f} %'.format(perf_ratio * 100))
         return module_losses, local_losses
 
     def production(self, modulearea, totalpower, modulepower, trackeradd):

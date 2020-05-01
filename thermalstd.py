@@ -14,6 +14,8 @@ from scipy.optimize import minimize
 
 from cable import loadcable
 from tqdm import tqdm
+import seaborn as sns
+from pathlib import Path
 # from cable import optimalcable
 
 
@@ -39,6 +41,16 @@ class cablevars:
         self.db_cable = db_cable
         self.cable_type = cable_type
         self.cable_name = cable_name
+
+
+class linevars:
+    def __init__(self, dfproduction, voltage, powerfactor, climavars, cablevars, outnetlimit, extline, maxnetprod=''):
+        self.df = dfproduction
+        self.voltage = voltage
+        self.powerfactor = powerfactor
+        self.outnetlimit = outnetlimit
+        self.extline = extline
+        self.maxnetprod = maxnetprod
 
 
 class Std7382006:
@@ -76,8 +88,11 @@ class Std7382006:
         ax.plot(x, y)
         ax.set_xlabel('Current (A)')
         ax.set_ylabel('Temperature (°C)')
+        ax.set_title('{}_{}'.format(self.cable_type,
+                                    self.cable_name))
         plt.grid()
-        plt.show()
+        plt.savefig('{}_{}.png'.format(self.cable_type,
+                                       self.cable_name))
 
     def _resistances_cable(self):
 
@@ -296,7 +311,7 @@ class Std7382006:
         final_current = cm.sqrt((qc + qr - qs) / rf)
         return np.real(final_current)
 
-    def temp(self, current, pointslist):
+    def temp(self, current, pointslist=''):
         if pointslist:
             x, y = pointslist
         else:
@@ -361,23 +376,26 @@ class Std7382006:
 
 class losspower(Std7382006):
 
-    def __init__(self, dfproduction, voltage, powerfactor, climavars, cablevars, outnetlimit, extline):
-        self.df = dfproduction
-        self.voltage = voltage
-        self.powerfactor = powerfactor
-        self.outnetlimit = outnetlimit
-        self.extline = extline
+    def __init__(self, climavars, cablevars, linevars):
+
+        self.df = linevars.df
+        self.voltage = linevars.voltage
+        self.powerfactor = linevars.powerfactor
+        self.outnetlimit = linevars.outnetlimit
+        self.extline = linevars.extline
+        self.maxnetprod = linevars.maxnetprod
         super().__init__(climavars, cablevars)
 
     def _current(self, power):
-        return (power * 1e6 * self.powerfactor) / (self.voltage * mt.sqrt(3))
+        return (power * 1e6) / (self.voltage * 1e3 * mt.sqrt(3) * self.powerfactor)
+
+    def _print_info_cable(self):
+        cable_data = self.selectcable()
+        print('TYPE: {}'.format(cable_data['Type'].values[0]))
+        print('NAME: {}'.format(cable_data['Name'].values[0]))
+        print('AWG: {}'.format(cable_data['AWG'].values[0]))
 
     def _completedf(self, df):
-        # df['I(A)'] = np.zeros(df.shape[0])
-        # df['Cable Temp'] = np.zeros(df.shape[0])
-        # df['Joule Loss'] = np.zeros(df.shape[0])
-        # df['Out Net Prod'] = np.zeros(df.shape[0])
-        # df['% JL'] = np.zeros(df.shape[0])
 
         newr = [self.new_resistance(i) for i in df.loc[:, 'Temperature']]
 
@@ -388,7 +406,7 @@ class losspower(Std7382006):
         df['Joule Loss'] = [self.power_loss(i, j) * self.extline
                             for i, j in zip(newr, df.loc[:, 'I(A)'])]
         df['Out Net Prod'] = df['Net Prod'] - df['Joule Loss']
-        df['% JL'] = np.nan_to_num(df['Joule Loss']/df['Out Net Prod']) * 100
+        df['% JL'] = np.nan_to_num(df['Joule Loss']/df['Net Prod']) * 100
         return df
 
     def initdf(self):
@@ -404,20 +422,29 @@ class losspower(Std7382006):
         else:
             while obj > 0:
                 obj = self._calculationvars(netprod)
-                netprod -= 0.05
+                netprod -= 1
 
         return netprod
 
     def finaldf(self):
 
         df = self.initdf()
-        df['Net Prod'] = np.clip(df['Net Prod'], 0, 62)
+        if self.maxnetprod != '':
+            df['Net Prod'] = np.clip(df['Net Prod'], 0, self.maxnetprod)
+        else:
+            pass
+        df = self._completedf(df)
         # df = self.initdf()
         # vfunc = np.vectorize(self.opt_netprod)
         # df['Net Prod'] = vfunc(df['Net Prod'])
         # df['Net Prod'] = [self.opt_netprod(x)
         #                   for index, x in tqdm(np.ndenumerate(df['Net Prod']))]
-        return self._completedf(df).to_excel('dfteste.xlsx')
+        # if outputxlsx == '':
+        #     pass
+        # else:
+        #     df.to_excel(outputxlsx)
+
+        return df
 
     def _calculationvars(self, netprod):
         if netprod > self.outnetlimit:
@@ -468,6 +495,306 @@ class losspower(Std7382006):
                 'Joule Loss']] / df.loc[df.index[i], ['Out Net Prod']]
 
         return df
+
+
+class analysis(losspower):
+
+    def __init__(self, climavars, cablevars, linevars, savexlsx=False):
+        # CABLE DESCRIPTION
+        super().__init__(climavars, cablevars, linevars)
+        rtc_1, tc_1, rtc_2, tc_2 = self._resistances_cable()
+
+        self.df = self.finaldf()
+        self.cable_type = cablevars.cable_type
+        self.cable_name = cablevars.cable_name
+        self.linevars = linevars
+        if savexlsx:
+            # REMOVE TIMEZONE BEFORE EXPORT TO EXCEL
+            filename = '{}_{}.xlsx'.format(
+                cablevars.cable_type, cablevars.cable_name)
+            self.df.index = self.df.index.tz_localize(None)
+            self.df.to_excel(filename)
+
+        print('\n')
+        print('-' * 55)
+        print('CABLE CHARACTERISTICS')
+        self._print_info_cable()
+        print('RESISTANCE {0:.1f}: {1:.4f} ohm/km'.format(tc_1, rtc_1 * 1000))
+        print('RESISTANCE {0:.1f}: {1:.4f} ohm/km'.format(tc_2, rtc_2 * 1000))
+
+    def conditions(self, lossper=1.3):
+        if self.linevars.maxnetprod == '':
+            self.nocutconditions(lossper)
+        else:
+            self.cutconditions(lossper)
+
+    def cutconditions(self, lossper):
+        # CONDIÇÃO 1 PERDAS MÉDIAS % JOULE ABAIXO DO VALOR MÁXIMO
+        meanlossjoule = self.df['% JL'].mean()
+        print('\n***CONDITION 1***\n')
+        if meanlossjoule <= lossper:
+            print('OK. THE AC LOSS MEAN {0:.2f} % IS <= {1:.2f} %.'.format(
+                meanlossjoule, lossper))
+        else:
+            print('NG. THE AC LOSS MEAN {0:.2f} % IS >= {1:.2f} %.'.format(
+                meanlossjoule, lossper))
+
+        self.cur_longdur = self.df['I(A)'].max()
+
+        # CALCULATING THE TEMPERATURE FOR LONG DURATION CURRENT
+
+        # Fixing the ambient temperature to a constant value
+        climavars.tamb = round(self.df['Temperature'].groupby(
+            self.df.index.day).max().mean())
+
+        temp_longdur = self.temp(self.cur_longdur)
+
+        # REN 191
+        x = [50, 55, 60, 64, 65, 70, 75, 80, 90]
+        y = [1.42, 1.33, 1.26, 1.24, 1.23, 1.19, 1.17, 1.15, 1.12]
+        # POLINOMIO 4 GRAU MELHOR COMPORTAMENTO COM CURVA
+        pol = np.polyfit(x, y, 4)
+        k_factor = np.polyval(pol, temp_longdur)
+        cur_shortdur = self.cur_longdur * k_factor
+        temp_shortdur = self.temp(cur_shortdur)
+
+        # CALCULATING LONG AND SHORT-TERM CURRENTS STANDARD 738- 2006
+        print('\n***CONDITION 2***\n')
+
+        print('LONG-TERM CURRENT: {0:.2f} A'.format(self.cur_longdur))
+        print(
+            'CABLE TEMPERATURE IN IEEE STD 738-2006: {0:.2f} °C'.format(temp_longdur))
+
+        if (temp_longdur > 94):
+            print('WARNING: CABLE TEMPERATURE ABOVE 94°C. NG')
+        else:
+            print('OK')
+
+        # CALCULATING LONG AND SHORT-TERM CURRENTS DATABASE
+        print('SHORT-TERM CURRENT: {0:.2f} A'.format(cur_shortdur))
+        print(
+            'CABLE TEMPERATURE IN IEEE STD 738-2006: {0:.2f} °C'.format(temp_shortdur))
+        if (temp_shortdur > 94):
+            print('WARNING: CABLE TEMPERATURE ABOVE 94°C. NG')
+        else:
+            print('OK')
+
+        # CALCULO CORRENTE DE LONGA CONDIÇÃO 3
+        print('\n***CONDITION 3***\n')
+
+        print('MAXIMUM TRANSMISSION LINE LOSS POWER: {0:.2f} MW'.format(
+            self.df['Joule Loss'].max()))
+        print('PERCENTAGE OF MAXIMUM TRANSMISSION LINE LOSS POWER: {0:.2f} %'.format(
+            self.df['% JL'].max()))
+        print('PERCENTAGE OF MEAN TRANSMISSION LINE LOSS POWER: {0:.2f} %'.format(
+            self.df['% JL'].mean()))
+        print('MAXIMUM NET POWER FROM POWERPLANT: {0:.2f} MW'.format(
+            self.df['Net Prod'].max()))
+        print('MAXIMUM POWER DELIVERED TO SUBSTATION: {0:.2f} MW'.format(
+            self.df['Out Net Prod'].max()))
+
+        print('\f', end='')
+
+    def nocutconditions(self, lossper):
+
+        # CONDIÇÃO 1 PERDAS MÉDIAS % JOULE ABAIXO DO VALOR MÁXIMO
+        meanlossjoule = self.df['% JL'].mean()
+        print('\nCONDITION 1')
+        if meanlossjoule <= lossper:
+            print('OK. THE AC LOSS MEAN {0:.2f} % IS <= {1:.2f} %.'.format(
+                meanlossjoule, lossper))
+        else:
+            print('NG. THE AC LOSS MEAN {0:.2f} % IS >= {1:.2f} %.'.format(
+                meanlossjoule, lossper))
+
+        self.max_curr = self.df['I(A)'].max()
+
+        # CONDIÇÃO 2 - TEMPERATURA DO CABO ABAIXO DE 94° PARA ACSR E AAAC
+
+        def testcond3():
+            df = self.df
+
+            df['x1'] = [
+                1 if i > self.max_curr else 0 for i in df[('I(A)')]]
+            df['y1'] = np.zeros(df.shape[0], dtype=int)
+            df['y1'] = df['x1'] * (df['x1'] + df['y1'])
+            if(df['y1'].max() >= 96 or (df['y1'].groupby(df.index.year).sum() >= 431).any()):
+                return 1
+            else:
+                return 0
+
+        def iteration(step):
+            while not testcond3():
+                self.max_curr -= step
+            return self.max_curr
+
+        self.cur_longdur = iteration(step=0.05)
+
+        # CALCULATING THE TEMPERATURE FOR LONG DURATION CURRENT
+
+        # Fixing the ambient temperature to a constant value
+        climavars.tamb = round(self.df['Temperature'].groupby(
+            self.df.index.day).max().mean())
+
+        temp_longdur = self.temp(self.cur_longdur)
+
+        # REN 191
+        x = [50, 55, 60, 64, 65, 70, 75, 80, 90]
+        y = [1.42, 1.33, 1.26, 1.24, 1.23, 1.19, 1.17, 1.15, 1.12]
+        # POLINOMIO 4 GRAU MELHOR COMPORTAMENTO COM CURVA
+        pol = np.polyfit(x, y, 4)
+        k_factor = np.polyval(pol, temp_longdur)
+        cur_shortdur = self.cur_longdur * k_factor
+        temp_shortdur = self.temp(cur_shortdur)
+
+        # CALCULATING LONG AND SHORT-TERM CURRENTS STANDARD 738- 2006
+        print('\nCONDITION 2')
+
+        print('\nLONG-TERM CURRENT: {0:.2f} A'.format(self.cur_longdur))
+        print(
+            'CABLE TEMPERATURE IN IEEE STD 738-2006: {0:.2f} °C'.format(temp_longdur))
+
+        # CALCULATING LONG AND SHORT-TERM CURRENTS DATABASE
+        print('SHORT-TERM CURRENT: {0:.2f} A'.format(cur_shortdur))
+        print(
+            'CABLE TEMPERATURE IN IEEE STD 738-2006: {0:.2f} °C'.format(temp_shortdur))
+        if (temp_shortdur > 94):
+            print('WARNING: CABLE TEMPERATURE ABOVE 94°C. NG')
+        # elif (cable_type == 'AAAC_1120' and templongcurrentstd > 70):
+        #     print('WARNING: CABLE TEMPERATURE ABOVE 70°C. CABLE NG')
+        else:
+            print('OK')
+
+        # CALCULO CORRENTE DE LONGA CONDIÇÃO 3
+        print('\nCONDITION 3')
+
+        print('\nHOURS ABOVE LONG-TERM CURRENT')
+        print(self.df['y1'].groupby(self.df.index.year).sum().to_string())
+
+        print(
+            '\nLONG-TERM CURRENT THAT RESPECT THE CONDITION 3: {0:.0f} A'.format(self.cur_longdur))
+        print(
+            'SHORT-TERM CURRENT (REN 191): {0:.0f}\nMAXIMUM CURRENT: {1:.0f} A'.format(cur_shortdur, self.max_curr))
+        if cur_shortdur > self.max_curr:
+            print('OK')
+        else:
+            print('NG')
+        print('\f', end='')
+
+    def curvecur(self, nameoutput):
+        df = self.df
+        tpd_mean = df['I(A)'].groupby(df.index.hour).mean()
+        tpd_max = df['I(A)'].groupby(df.index.hour).max()
+
+        sns.set()
+        base_color0 = sns.color_palette()[0]
+        base_color1 = sns.color_palette()[1]
+
+        fig = plt.figure()
+        ax = fig.add_subplot(1, 1, 1)
+        ax2 = ax.twinx()
+
+        # Major ticks every 20, minor ticks every 5
+        major_ticks = np.arange(0, tpd_mean.max(), 100)
+        minor_ticks = np.arange(0, tpd_mean.max(), 50)
+
+        day_major_ticks = np.arange(0, len(tpd_mean.index), 5)
+        day_minor_ticks = np.arange(0, len(tpd_mean.index), 1)
+
+        ax.set_xticks(day_major_ticks)
+        ax.set_xticks(day_minor_ticks, minor=True)
+        ax.set_yticks(major_ticks)
+        ax.set_yticks(minor_ticks, minor=True)
+
+        ax.grid(which='major', alpha=0.5)
+        ax.grid(which='minor', alpha=0.2)
+
+        max_value = df['I(A)'].max()
+
+        ax.set_ylim(0, max_value * (1.1))
+        ax2.set_ylim(0, max_value * (1.1))
+
+        ax.bar(tpd_mean.index, tpd_mean.values,
+               width=0.8, color=base_color0)
+        ax2.bar(tpd_max.index, (tpd_max.values - tpd_mean.values),
+                width=0.8, bottom=tpd_mean.values, color=base_color1)
+
+        ax.set_xlabel('Hour')
+        ax.set_ylabel('I(A)')
+
+        ax.legend(['Mean I(A)'], loc='upper left')
+        ax2.legend(['Maximum I(A)'], loc='upper right')
+
+        cwd = Path.cwd()
+        imagename = '{}.png'.format(nameoutput)
+        imagefilepath = cwd / imagename
+        if imagefilepath.exists():
+            pass
+        else:
+            plt.savefig('{}.png'.format(nameoutput))
+
+    def curvecurtemp(self, nameoutput):
+        df = self.df
+        currmean = df['I(A)'].groupby(df.index.hour).mean()
+        currmax = df['I(A)'].groupby(df.index.hour).max()
+
+        tempmean = df['Cable Temp'].groupby(df.index.hour).mean()
+        tempmax = df['Cable Temp'].groupby(df.index.hour).max()
+
+        sns.set()
+        base_color0 = sns.color_palette()[0]
+        base_color1 = sns.color_palette()[1]
+        base_color2 = sns.color_palette()[2]
+        base_color3 = sns.color_palette()[3]
+
+        fig = plt.figure(figsize=(10, 5))
+        # CURRENT
+        ax1 = fig.add_subplot(1, 2, 1)
+        ax2 = ax1.twinx()
+        # TEMPERATURE
+        ax3 = fig.add_subplot(1, 2, 2)
+        ax4 = ax3.twinx()
+
+        max_curr = df['I(A)'].max()
+        max_temp = df['Cable Temp'].max()
+
+        ax1.set_ylim(0, max_curr * 1.1)
+        ax2.set_ylim(0, max_curr * 1.1)
+        ax2.set_yticks([])
+
+        ax3.set_ylim(0, max_temp * 1.1)
+        ax4.set_ylim(0, max_temp * 1.1)
+        ax4.set_yticks([])
+
+        bar1 = ax1.bar(currmean.index, currmean.values,
+                       width=0.8, color=base_color0, label='Mean I(A)')
+        bar2 = ax2.bar(currmax.index, (currmax.values - currmean.values),
+                       width=0.8, bottom=currmean.values, color=base_color1, label='Max I(A)')
+
+        bar3 = ax3.bar(tempmean.index, tempmean.values,
+                       width=0.8, color=base_color2, label='Mean Tcond(°C)')
+        bar4 = ax4.bar(tempmax.index, (tempmax.values - tempmean.values),
+                       width=0.8, bottom=tempmean.values, color=base_color3, label='Max Tcond(°C)')
+
+        # added these three lines
+        bars_curr = [bar1, bar2]
+        temp_curr = [bar3, bar4]
+
+        labs1 = [l.get_label() for l in bars_curr]
+        ax1.legend(bars_curr, labs1, loc='upper left')
+
+        labs2 = [l.get_label() for l in temp_curr]
+        ax3.legend(temp_curr, labs2, loc='upper left')
+
+        # plt.tight_layout()
+
+        cwd = Path.cwd()
+        imagename = '{}.png'.format(nameoutput)
+        imagefilepath = cwd / imagename
+        if imagefilepath.exists():
+            pass
+        else:
+            plt.savefig('{}.png'.format(nameoutput))
 
     # def cablechoice(self, cable_type, cable_name, voltage, extline):
     #         # TODO
