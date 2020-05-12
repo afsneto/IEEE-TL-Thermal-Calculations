@@ -40,8 +40,8 @@ class helioclim3:
             savepandasfile(self.csvfile, pkl_filename)
             self.df = loadpandasfile()
 
-    def dfloaded(self):
-        return self.df
+    # def dfloaded(self):
+    #     return self.df
 
     def _fixhours(self, str_datetime):
         # fix hour format 24:00:00

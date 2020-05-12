@@ -9,13 +9,13 @@ import solarpower
 db_cable = 'DB_cables.xlsx'
 csvfile = r'D:\Analise_Dados_Solares\UFV Rio do Peixe\Séries de longo prazo (Helio-Clim3)\SAO_JOAO_DO_RIO_DO_PEIXE_HC3-METEO_hour_lat-6.725_lon-38.454_2004-02-01_2019-01-30_hz1.csv'
 
-dictstudy_ACSR = {'Type': ['ACSR', 'ACSR', 'ACSR', 'ACSR', 'ACSR', 'ACSR'],
-                  'Name': ['Partridge', 'Linnet', 'Ibis', 'Hawk', 'Dove', 'Grosbeak']}
-cablesstudy_ACSR = pd.DataFrame(dictstudy_ACSR)
+# dictstudy_ACSR = {'Type': ['ACSR', 'ACSR', 'ACSR', 'ACSR', 'ACSR', 'ACSR'],
+#                   'Name': ['Partridge', 'Linnet', 'Ibis', 'Hawk', 'Dove', 'Grosbeak']}
+# cablesstudy_ACSR = pd.DataFrame(dictstudy_ACSR)
 
-dictstudy_AAAC = {'Type': ['AAAC_1120', 'AAAC_1120', 'AAAC_1120', 'AAAC_1120', 'AAAC_1120', 'AAAC_1120'],
-                  'Name': ['Krypton', 'Lutetium', 'Neon', 'Nitrogen', 'Nobelium', 'Oxygen']}
-cablesstudy_AAAC = pd.DataFrame(dictstudy_AAAC)
+# dictstudy_AAAC = {'Type': ['AAAC_1120', 'AAAC_1120', 'AAAC_1120', 'AAAC_1120', 'AAAC_1120', 'AAAC_1120'],
+#                   'Name': ['Krypton', 'Lutetium', 'Neon', 'Nitrogen', 'Nobelium', 'Oxygen']}
+# cablesstudy_AAAC = pd.DataFrame(dictstudy_AAAC)
 
 
 # LOADING HC3 FILE
@@ -31,7 +31,7 @@ climavars = thermalstd.climavars(vw=1.0,
                                  ab=0.5,
                                  tamb=40,
                                  zl=90,
-                                 lat=30,
+                                 lat=-6,
                                  atm=1,
                                  he=100,
                                  phi=90,
@@ -93,24 +93,22 @@ def study_cables(dictcables, df1):
 
         # CUTTING MAX PRODUCTION IN SOLAR POWER PLANT
 
-        # linevars = thermalstd.linevars(dfproduction=dfproduction,
-        #                                voltage=69,
-        #                                powerfactor=0.95,
-        #                                climavars=climavars,
-        #                                cablevars=cablevars,
-        #                                outnetlimit=60,
-        #                                extline=14,
-        #                                maxnetprod=61)
-
-        # WITHOUT CUTTING MAX PRODUCTION IN SOLAR POWER PLANT
-
         linevars = thermalstd.linevars(dfproduction=dfproduction,
                                        voltage=69,
                                        powerfactor=0.95,
                                        climavars=climavars,
                                        cablevars=cablevars,
-                                       outnetlimit=60,
-                                       extline=14)
+                                       extline=14,
+                                       maxnetprod=61)
+
+        # WITHOUT CUTTING MAX PRODUCTION IN SOLAR POWER PLANT
+
+        # linevars = thermalstd.linevars(dfproduction=dfproduction,
+        #                                voltage=69,
+        #                                powerfactor=0.95,
+        #                                climavars=climavars,
+        #                                cablevars=cablevars,
+        #                                extline=14)
 
         # outnetlimit = power value at the destiny
         # maxnetprod = max power valer at the origin
@@ -122,21 +120,20 @@ def study_cables(dictcables, df1):
                                            linevars=linevars,
                                            savexlsx=True)
 
-        dataanalysis.conditions()
-
         print('PLOTTING MEAN AND MAX CURRENT BARS')
         dataanalysis.curvecur('Current_Bars')
 
         print('PLOTTING CURRENT X TEMP BARS')
         dataanalysis.curvecurtemp('Current_Temp_Bars')
 
+        dataanalysis.conditions()
+
 
 # study_cables(cablesstudy_ACSR, df1)
 # study_cables(cablesstudy_AAAC, df1)
 
+dictstudy = {'Type': ['AAAC_1120'],
+             'Name': ['Nitrogen']}
+cablesstudy = pd.DataFrame(dictstudy)
 
-dictstudy_ACSR = {'Type': ['ACSR'],
-                  'Name': ['Partridge']}
-cablesstudy_ACSR = pd.DataFrame(dictstudy_ACSR)
-
-study_cables(cablesstudy_ACSR, df1)
+study_cables(cablesstudy, df1)

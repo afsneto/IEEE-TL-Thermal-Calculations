@@ -44,7 +44,7 @@ class cablevars:
 
 
 class linevars:
-    def __init__(self, dfproduction, voltage, powerfactor, climavars, cablevars, outnetlimit, extline, maxnetprod=''):
+    def __init__(self, dfproduction, voltage, powerfactor, climavars, cablevars, extline, maxnetprod=None, outnetlimit=None):
         self.df = dfproduction
         self.voltage = voltage
         self.powerfactor = powerfactor
@@ -296,9 +296,9 @@ class Std7382006:
         return qs
 
     def _pointscable(self):
-        tempinterval = np.arange(10, 150, 1)
-        x = [self.current(i) for i in tempinterval]
-        return x, tempinterval
+        tempcable_interval = np.arange(10, 150, 1)
+        x = [self.current(i) for i in tempcable_interval]
+        return x, tempcable_interval
 
     def current(self, tc):
 
@@ -426,10 +426,10 @@ class losspower(Std7382006):
 
         return netprod
 
-    def finaldf(self):
+    def limit_maxnetprod(self):
 
         df = self.initdf()
-        if self.maxnetprod != '':
+        if self.maxnetprod:
             df['Net Prod'] = np.clip(df['Net Prod'], 0, self.maxnetprod)
         else:
             pass
@@ -504,7 +504,7 @@ class analysis(losspower):
         super().__init__(climavars, cablevars, linevars)
         rtc_1, tc_1, rtc_2, tc_2 = self._resistances_cable()
 
-        self.df = self.finaldf()
+        self.df = self.limit_maxnetprod()
         self.cable_type = cablevars.cable_type
         self.cable_name = cablevars.cable_name
         self.linevars = linevars
@@ -523,12 +523,12 @@ class analysis(losspower):
         print('RESISTANCE {0:.1f}: {1:.4f} ohm/km'.format(tc_2, rtc_2 * 1000))
 
     def conditions(self, lossper=1.3):
-        if self.linevars.maxnetprod == '':
-            self.nocutconditions(lossper)
-        else:
+        if self.linevars.maxnetprod:
             self.cutconditions(lossper)
+        else:
+            self.nocutconditions(lossper)
 
-    def cutconditions(self, lossper):
+    def cutconditions(self, lossper):  # TODO INSERT PARAMETER maxtemp (90 or 94 °C)
         # CONDIÇÃO 1 PERDAS MÉDIAS % JOULE ABAIXO DO VALOR MÁXIMO
         meanlossjoule = self.df['% JL'].mean()
         print('\n***CONDITION 1***\n')
@@ -539,7 +539,7 @@ class analysis(losspower):
             print('NG. THE AC LOSS MEAN {0:.2f} % IS >= {1:.2f} %.'.format(
                 meanlossjoule, lossper))
 
-        self.cur_longdur = self.df['I(A)'].max()
+        cur_longdur = self.df['I(A)'].max()
 
         # CALCULATING THE TEMPERATURE FOR LONG DURATION CURRENT
 
@@ -547,7 +547,9 @@ class analysis(losspower):
         climavars.tamb = round(self.df['Temperature'].groupby(
             self.df.index.day).max().mean())
 
-        temp_longdur = self.temp(self.cur_longdur)
+        print("Média máxima dia temperatura: {} °C".format(climavars.tamb))
+
+        temp_longdur = self.temp(cur_longdur)
 
         # REN 191
         x = [50, 55, 60, 64, 65, 70, 75, 80, 90]
@@ -555,13 +557,13 @@ class analysis(losspower):
         # POLINOMIO 4 GRAU MELHOR COMPORTAMENTO COM CURVA
         pol = np.polyfit(x, y, 4)
         k_factor = np.polyval(pol, temp_longdur)
-        cur_shortdur = self.cur_longdur * k_factor
+        cur_shortdur = cur_longdur * k_factor
         temp_shortdur = self.temp(cur_shortdur)
 
         # CALCULATING LONG AND SHORT-TERM CURRENTS STANDARD 738- 2006
         print('\n***CONDITION 2***\n')
 
-        print('LONG-TERM CURRENT: {0:.2f} A'.format(self.cur_longdur))
+        print('LONG-TERM CURRENT: {0:.2f} A'.format(cur_longdur))
         print(
             'CABLE TEMPERATURE IN IEEE STD 738-2006: {0:.2f} °C'.format(temp_longdur))
 
@@ -611,11 +613,11 @@ class analysis(losspower):
 
         # CONDIÇÃO 2 - TEMPERATURA DO CABO ABAIXO DE 94° PARA ACSR E AAAC
 
-        def testcond3():
+        def testcond3(curr):
             df = self.df
 
             df['x1'] = [
-                1 if i > self.max_curr else 0 for i in df[('I(A)')]]
+                1 if i > curr else 0 for i in df[('I(A)')]]
             df['y1'] = np.zeros(df.shape[0], dtype=int)
             df['y1'] = df['x1'] * (df['x1'] + df['y1'])
             if(df['y1'].max() >= 96 or (df['y1'].groupby(df.index.year).sum() >= 431).any()):
@@ -624,11 +626,12 @@ class analysis(losspower):
                 return 0
 
         def iteration(step):
-            while not testcond3():
-                self.max_curr -= step
-            return self.max_curr
+            new_curr = self.max_curr
+            while not testcond3(new_curr):
+                new_curr -= step
+            return new_curr
 
-        self.cur_longdur = iteration(step=0.05)
+        cur_longdur = iteration(step=1)
 
         # CALCULATING THE TEMPERATURE FOR LONG DURATION CURRENT
 
@@ -636,7 +639,7 @@ class analysis(losspower):
         climavars.tamb = round(self.df['Temperature'].groupby(
             self.df.index.day).max().mean())
 
-        temp_longdur = self.temp(self.cur_longdur)
+        temp_longdur = self.temp(cur_longdur)
 
         # REN 191
         x = [50, 55, 60, 64, 65, 70, 75, 80, 90]
@@ -644,13 +647,13 @@ class analysis(losspower):
         # POLINOMIO 4 GRAU MELHOR COMPORTAMENTO COM CURVA
         pol = np.polyfit(x, y, 4)
         k_factor = np.polyval(pol, temp_longdur)
-        cur_shortdur = self.cur_longdur * k_factor
+        cur_shortdur = cur_longdur * k_factor
         temp_shortdur = self.temp(cur_shortdur)
 
         # CALCULATING LONG AND SHORT-TERM CURRENTS STANDARD 738- 2006
         print('\nCONDITION 2')
 
-        print('\nLONG-TERM CURRENT: {0:.2f} A'.format(self.cur_longdur))
+        print('\nLONG-TERM CURRENT: {0:.2f} A'.format(cur_longdur))
         print(
             'CABLE TEMPERATURE IN IEEE STD 738-2006: {0:.2f} °C'.format(temp_longdur))
 
@@ -660,8 +663,7 @@ class analysis(losspower):
             'CABLE TEMPERATURE IN IEEE STD 738-2006: {0:.2f} °C'.format(temp_shortdur))
         if (temp_shortdur > 94):
             print('WARNING: CABLE TEMPERATURE ABOVE 94°C. NG')
-        # elif (cable_type == 'AAAC_1120' and templongcurrentstd > 70):
-        #     print('WARNING: CABLE TEMPERATURE ABOVE 70°C. CABLE NG')
+
         else:
             print('OK')
 
@@ -672,7 +674,7 @@ class analysis(losspower):
         print(self.df['y1'].groupby(self.df.index.year).sum().to_string())
 
         print(
-            '\nLONG-TERM CURRENT THAT RESPECT THE CONDITION 3: {0:.0f} A'.format(self.cur_longdur))
+            '\nLONG-TERM CURRENT THAT RESPECT THE CONDITION 3: {0:.0f} A'.format(cur_longdur))
         print(
             'SHORT-TERM CURRENT (REN 191): {0:.0f}\nMAXIMUM CURRENT: {1:.0f} A'.format(cur_shortdur, self.max_curr))
         if cur_shortdur > self.max_curr:
@@ -682,7 +684,7 @@ class analysis(losspower):
         print('\f', end='')
 
     def curvecur(self, nameoutput):
-        df = self.df
+        df = self.df  # TODO
         tpd_mean = df['I(A)'].groupby(df.index.hour).mean()
         tpd_max = df['I(A)'].groupby(df.index.hour).max()
 

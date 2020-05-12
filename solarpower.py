@@ -59,10 +59,10 @@ class energycalc:
         #                  'Wind direction', 'Rainfall', 'Snowfall',
         #                  'Snow depth'],
         #         inplace=True)
-        df.drop(columns=['Top of Atmosphere',
-                         'Code', 'Relative Humidity',
-                         'Wind direction', 'Rainfall', 'Snowfall',
-                         'Snow depth'])
+        df = df.drop(columns=['Top of Atmosphere',
+                              'Code', 'Relative Humidity',
+                              'Wind direction', 'Rainfall', 'Snowfall',
+                              'Snow depth'])
 
         return df
 
